@@ -19,11 +19,12 @@ extern "C" {
 
 
 // CODEC I2C lines
-on tile[0]: port p_i2c_scl = XS1_PORT_1N;
-on tile[0]: port p_i2c_sda = XS1_PORT_1O;
+//on tile[0]: port p_i2c_scl = XS1_PORT_1N;
+//on tile[0]: port p_i2c_sda = XS1_PORT_1O;
+on tile[0]: port p_i2c = PORT_I2C;
 
 // CODEC reset line
-on tile[1]: out port p_codec_reset  = PORT_CODEC_RST_N;
+on tile[0]: out port p_codec_reset  = PORT_GP_OUT;
 
 // CODEC Reset bit mask
 #define CODEC_RELEASE_RESET      (0x8) // Release codec from reset
@@ -78,7 +79,8 @@ void xk_evk_xu316_AudioHwRemote(chanend c)
     [[combine]]
     par
     {
-        i2c_master(i2c, 1, p_i2c_scl, p_i2c_sda, 10);
+        //i2c_master(i2c, 1, p_i2c_scl, p_i2c_sda, 10);
+        i2c_master_single_port(i2c, 1, p_i2c, 100, 2, 3, 0x3);
         AudioHwRemote2(c, i2c[0]);
     }
 }
@@ -118,7 +120,8 @@ void xk_evk_xu316_AudioHwInit(const xk_evk_xu316_config_t &config)
     unsigned regVal = 0;
 
     /* Take CODEC out of reset */
-    p_codec_reset <: CODEC_RELEASE_RESET;
+    //p_codec_reset <: CODEC_RELEASE_RESET;
+    p_codec_reset <: 0xFF;
 
     delay_milliseconds(100);
 
@@ -174,7 +177,9 @@ void xk_evk_xu316_AudioHwInit(const xk_evk_xu316_config_t &config)
     // Enable Master Analog Power Control
     CODEC_REGWRITE(AIC3204_LDO_CTRL, 0x01);
     // Set Common Mode voltages: Full Chip CM to 0.9V and Output Common Mode for Headphone to 1.65V and HP powered from LDOin @ 3.3V.
-    CODEC_REGWRITE(AIC3204_CM_CTRL, 0x33);
+    //CODEC_REGWRITE(AIC3204_CM_CTRL, 0x33);
+    // Set Common Mode voltage to 0.9V and HPL/HPR powered from AVDD. Improves crosstalk. Reduces output swing.
+    CODEC_REGWRITE(AIC3204_CM_CTRL, 0x00);
     // Set PowerTune Modes
     // Set the Left & Right DAC PowerTune mode to PTM_P3/4. Use Class-AB driver.
     CODEC_REGWRITE(AIC3204_PLAY_CFG1, 0x00);
@@ -195,19 +200,40 @@ void xk_evk_xu316_AudioHwInit(const xk_evk_xu316_config_t &config)
     CODEC_REGWRITE(AIC3204_HPR_ROUTE, 0x08);
     // We are using Line input with low gain for PGA so can use 40k input R but lets stick to 20k for now.
     // Route IN2_L to LEFT_P with 20K input impedance
-    CODEC_REGWRITE(AIC3204_LPGA_P_ROUTE, 0x20);
+    //CODEC_REGWRITE(AIC3204_LPGA_P_ROUTE, 0x20);
     // Route IN2_R to LEFT_M with 20K input impedance
-    CODEC_REGWRITE(AIC3204_LPGA_N_ROUTE, 0x20);
+    //CODEC_REGWRITE(AIC3204_LPGA_N_ROUTE, 0x20);
+    
+    // New headset config
+    // IN3L is routed to Left MICPGA with 10k resistance
+    CODEC_REGWRITE(AIC3204_LPGA_P_ROUTE, 0x04);
+    // Route CM1L to LEFT_M with 10K input impedance
+    CODEC_REGWRITE(AIC3204_LPGA_N_ROUTE, 0x40);
+    
     // Route IN1_R to RIGHT_P with 20K input impedance
     CODEC_REGWRITE(AIC3204_RPGA_P_ROUTE, 0x80);
     // Route IN1_L to RIGHT_M with 20K input impedance
     CODEC_REGWRITE(AIC3204_RPGA_N_ROUTE, 0x20);
+    
+    //CODEC_REGWRITE(AIC3204_MICBIAS, 0x50); // 1.7V, sourced from AVDD - occasionally very noisy on some chips.
+    // This noise goes away if we set AVDD to 1.77V instead of 1.72.
+    // This feels like a chip bug in AIC3204, for now use 2.1V setting from LDOin. Noise is a bit higher but so will be signal.
+    
+    //CODEC_REGWRITE(AIC3204_MICBIAS, 0x40); // 1.25V, sourced from AVDD
+    CODEC_REGWRITE(AIC3204_MICBIAS, 0x68); // 2.5V, sourced from LDOin
+    
+    // Headset detect setup
+    // Disable SCLK function on SCLK/MFP3 pin
+    CODEC_REGWRITE(AIC3204_SCLK_MFP3, 0x00);
+    // Headset detect enabled
+    CODEC_REGWRITE(AIC3204_HEADSET_DET, 0x80); 
+    
     // Unmute HPL and set gain to 0dB
     CODEC_REGWRITE(AIC3204_HPL_GAIN, 0x00);
     // Unmute HPR and set gain to 0dB
     CODEC_REGWRITE(AIC3204_HPR_GAIN, 0x00);
-    // Unmute Left MICPGA, Set Gain to 0dB.
-    CODEC_REGWRITE(AIC3204_LPGA_VOL, 0x00);
+    // Unmute Left MICPGA, Set Gain to +20dB.
+    CODEC_REGWRITE(AIC3204_LPGA_VOL, 0x28);
     // Unmute Right MICPGA, Set Gain to 0dB.
     CODEC_REGWRITE(AIC3204_RPGA_VOL, 0x00);
     // Power up HPL and HPR drivers
